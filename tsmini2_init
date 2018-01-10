@@ -1,0 +1,53 @@
+#!/bin/sh
+# LSB 12 bits of this reg correspond to CN1 output pins {29,27,25,23,21,19,17,13,11,9,7,5} 
+# MSB 2 bits are the I2C signals {i2c_clk, i2c_data}
+cn1="--initcn1 0xc0000fff"
+
+
+# Config reg mapping controls AC/DC coupling and single-ended/differential configuration:
+# Bits:
+#  20-16: fir_lsbchop: Defaults to 15, appropriate for FIR bank 3
+#  15-14: fir_bank: Defaults to FIR bank 3, unity gain passthru
+#     13: sel_an4_dc: If 1, selects DC coupling (not AC) on channel 4
+#     12: sel_an3_dc: If 1, selects DC coupling (not AC) on channel 3
+#     11: en_an4_gnd: If 1, selects single-ended (not differential) on channel 4
+#     10: en_an3_gnd: If 1, selects single-ended (not differential) on channel 3
+#      9: en_an2_gnd: If 1, selects single-ended (not differential) on channel 2
+#      8: en_an1_gnd: If 1, selects single-ended (not differential) on channel 1
+#    7-0: Reserved, should be written as 0
+cfg="--config 0x3fefff00"
+
+set -x
+
+for F in `find /sys -type f -name vendor`; do
+	read v < $F
+	dir=${F%/*}
+	dev=${dir}/device
+	if [ -f $dev ]; then
+		read d < $dev
+	else
+		continue
+	fi
+	if [ "$v" = "0x1172" -a "$d" = "0x0004" ]; then
+		ln -sf $dir /tsmini2
+		break
+	fi
+done
+
+if [ ! -e /tsmini2/enable ]; then
+  echo "TS-MINI not found!"
+  exit 1
+fi
+
+echo 1 > /tsmini2/enable
+insmod udmabuf.ko udmabuf0=2097152
+if [ ! -e /tsmini2_rambuf ]; then
+  ln -sf /sys/class/udmabuf/udmabuf0 /tsmini2_rambuf
+fi
+/bin/echo -n -e "\x47" | dd of=/tsmini2/config bs=1 seek=4
+read phys < /tsmini2_rambuf/phys_addr
+./tsmini2 --initdma $phys $cn1 $cfg
+for F in `find /sys -name 'scaling_governor'`; do
+	echo performance > $F
+done
+
