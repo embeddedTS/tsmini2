@@ -15,7 +15,7 @@ cn1="--initcn1 0xc0000fff"
 #      9: en_an2_gnd: If 1, selects single-ended (not differential) on channel 2
 #      8: en_an1_gnd: If 1, selects single-ended (not differential) on channel 1
 #    7-0: Reserved, should be written as 0
-cfg="--config 0x3fefff00"
+cfg="--config 0x000fff00"
 
 set -x
 
