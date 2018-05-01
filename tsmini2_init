@@ -40,7 +40,25 @@ if [ ! -e /tsmini2/enable ]; then
 fi
 
 echo 1 > /tsmini2/enable
-insmod udmabuf.ko udmabuf0=2097152
+
+# Check if udmabuf is in this kernel
+modinfo udmabuf > /dev/null 2>&1
+
+if [ "$?" = "0" ]; then
+	modprobe udmabuf udmabuf0=2097152
+else
+	if [ -e "/usr/src/tsmini2/udmabuf.ko" ]; then
+		insmod /usr/src/tsmini2/udmabuf.ko udmabuf0=2097152
+		if [ $? != 0 ]; then
+			echo "Does /usr/src/tsmini2/udmabuf.ko match this platform?"
+			exit 1;
+		fi
+	else
+		echo "Need to build udmabuf.ko for this platform."
+		exit 1
+	fi
+fi
+
 if [ ! -e /tsmini2_rambuf ]; then
   ln -sf /sys/class/udmabuf/udmabuf0 /tsmini2_rambuf
 fi
