@@ -297,6 +297,7 @@ void usage(char **argv) {
 	  "  -c, --config=VAL         Initialize config reg to VAL\n"
 	  "  -p, --program=RPDFILE    Program new FPGA configuration flash from RPDFILE\n"
 	  "  -s, --save=RPDFILE       Save existing FPGA flash config to RPDFILE\n"
+	  "  -l, --info               Print revision and configuration\n"
 	  "\n"
 	  "By default, this program connects to the TS-MINI and sends 4x 16-bit channels\n" 
           "of raw binary analog data at 5 megasample/sec.\n", argv[0]);
@@ -372,6 +373,7 @@ superloop:
 
 int main(int argc, char **argv) {
 	ssize_t r;
+	uint32_t reg;
 	int fpgafd, memfd, c, regset = 0;
 	pthread_mutexattr_t mattr;
 	pthread_attr_t attr;
@@ -385,6 +387,7 @@ int main(int argc, char **argv) {
 	  { "initdma", 1, 0, 'i' },
 	  { "initcn1", 1, 0, 'o' },
 	  { "config", 1, 0, 'c' },
+	  { "info", 0, 0, 'l' },
 	  { "help", 0, 0, 'h' },
 	  { 0, 0, 0, 0}
 	};
@@ -398,7 +401,7 @@ int main(int argc, char **argv) {
 	fpga = mmap(0, 4096, PROT_READ|PROT_WRITE, MAP_SHARED, fpgafd, 0);
 	assert (fpga != (void *)-1);
 
-	while ((c = getopt_long(argc, argv, "c:o:i:s:p:h", long_options, NULL)) != -1) {
+	while ((c = getopt_long(argc, argv, "c:o:i:s:p:lh", long_options, NULL)) != -1) {
 		switch(c) {
 		case 'c':
 			regset = 1;
@@ -418,6 +421,17 @@ int main(int argc, char **argv) {
 		case 'p':
 			opt_program_arg = strdup(optarg);
 			break;
+		case 'l':
+			reg = *(volatile uint32_t *)(fpga);
+			printf("rev=%d\n", reg & 0xff);
+			printf("sel_an1_gnd=%d\n", !!(reg & (1 << 8)));
+			printf("sel_an2_gnd=%d\n", !!(reg & (1 << 9)));
+			printf("sel_an3_gnd=%d\n", !!(reg & (1 << 10)));
+			printf("sel_an4_gnd=%d\n", !!(reg & (1 << 11)));
+			printf("sel_an4_gnd=%d\n", !!(reg & (1 << 11)));
+			printf("sel_an3_dc=%d\n", !!(reg & (1 << 12)));
+			printf("sel_an4_dc=%d\n", !!(reg & (1 << 13)));
+			return 0;
 		case 'h':
 		default:
 			usage(argv);
