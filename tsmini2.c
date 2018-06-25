@@ -443,7 +443,7 @@ int main(int argc, char **argv) {
 	else if (opt_program_arg) return opt_program(opt_program_arg);
 	else if (regset) return 0;
 
-	memfd = open("/dev/udmabuf0", O_RDWR);
+	memfd = open("/dev/udmabuf0", O_RDWR | O_SYNC);
 	if (memfd == -1) {
 		perror("/dev/udmabuf0");
 		return 3;
