@@ -1,0 +1,132 @@
+;/*++
+;
+;Copyright (c) Technologic Systems Inc, 2018
+;
+;   THIS CODE AND INFORMATION IS PROVIDED "AS IS" WITHOUT WARRANTY OF ANY
+;   KIND, EITHER EXPRESSED OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE
+;   IMPLIED WARRANTIES OF MERCHANTABILITY AND/OR FITNESS FOR A PARTICULAR
+;   PURPOSE.
+;
+;Module Name:
+;
+;    TSMiniDriver.inf
+;
+;Abstract:
+;    INF file for a the TS-MINI-ADC PCIe board
+;
+;--*/
+
+[Version]
+Signature      = "$WINDOWS NT$"
+Class          = TSMiniDevices
+ClassGuid      = {280D1736-F08A-494D-AFA2-5A731DBBC7BF}
+Provider       = %ProviderString%
+DriverVer = 10/08/2018,15.19.42.548
+CatalogFile    = tsminidrv.cat
+
+
+[DestinationDirs]
+DefaultDestDir  = 12
+CoInstaller_CopyFiles = 11
+
+;-------------------------------------------------------------------------
+; Class Section
+;-------------------------------------------------------------------------
+[ClassInstall32]
+Addreg         = TSMiniDevicesClassReg
+
+[TSMiniDevicesClassReg]
+HKR,,,0,%ClassName%
+HKR,,Icon,,-5
+HKR,,DeviceCharacteristics,0x10001,0x100     ;Use same security checks on relative opens
+HKR,,Security,,"D:P(A;;GA;;;SY)(A;;GA;;;BA)" ;Allow generic all access to system and built-in Admin.
+
+;-------------------------------------------------------------------------
+; Device Install Section
+;-------------------------------------------------------------------------
+[ControlFlags]
+ExcludeFromSelect = *
+
+[Manufacturer]
+%ManufacturerString%=MSFT,NTamd64
+
+[SourceDisksFiles]
+TSMiniDriver.sys     = 1
+;
+
+
+[SourceDisksNames]
+1=%DISK_NAME%,
+
+; For XP and later
+[MSFT.NTamd64]
+; DisplayName            Section           DeviceId
+; -----------            -------           --------
+%TSMINI.DRVDESC%=TSMINI_Inst, PCI\VEN_1172&DEV_0004
+
+
+
+[TSMINI_Inst.NT]
+CopyFiles      = TSMINI.CopyFiles
+
+
+[TSMINI_Inst.NT.Interfaces]
+AddInterface=%GUID_INTERFACE%,%MODEL_NAME%
+
+
+[TSMINI.CopyFiles]
+TSMiniDriver.sys
+
+
+
+[TSMINI_Inst.NT.Services]
+AddService     = TSMINI,0x00000002,TSMINI_Service
+
+[TSMINI_Service]
+DisplayName    = %TSMINI.SVCDESC%
+ServiceType    = 1                  ; SERVICE_KERNEL_DRIVER
+StartType      = 3                  ; SERVICE_DEMAND_START
+ErrorControl   = 1                  ; SERVICE_ERROR_NORMAL
+ServiceBinary  = %12%\TSMiniDriver.sys
+
+;-------------------------------------------------------------------------
+; WDF Coinstaller installation
+;-------------------------------------------------------------------------
+[TSMINI_Inst.NT.CoInstallers]
+AddReg         = CoInstaller_AddReg
+CopyFiles      = CoInstaller_CopyFiles
+
+[CoInstaller_CopyFiles]
+;
+
+
+[CoInstaller_AddReg]
+;
+
+
+[TSMINI_Inst.NT.Wdf]
+KmdfService    = TSMINI, TSMINI_wdfsect
+
+[TSMINI_Inst.NT.hw]
+AddReg=DriverHwAddReg
+
+[DriverHwAddReg]
+HKR,,FriendlyName,,"TS-MINI-ADC"
+HKR,,Security,,"D:P(A;;GA;;;WD)" 
+
+[TSMINI_wdfsect]
+KmdfLibraryVersion = 1.15
+
+;------------------------------------------------------------------------------
+;  String Definitions
+;------------------------------------------------------------------------------
+
+[Strings]
+ProviderString     = "Technologic Systems Inc."
+ManufacturerString = "Technologic Systems Inc."
+ClassName          = "TS-MINI Devices"
+TSMINI.SVCDESC     = "Technologic Systems TS-MINI PCI Driver"
+TSMINI.DRVDESC     = "Technologic Systems TS-MINI PCI Driver"
+DISK_NAME          = "TS-MINI Install Disk"
+GUID_INTERFACE     = "{cadae116-f4d7-42c9-9bb1-bac6d8e2d6d0}"
+MODEL_NAME         = "TSMINIADC"
