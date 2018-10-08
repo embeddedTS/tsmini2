@@ -207,17 +207,18 @@ int main(int argc, char *argv[])
 
 	wcsncpy_s(fname, _T("TS-MINI-ADC"), sizeof(fname) / 2);
 
-	HDEVINFO info = SetupDiGetClassDevs(&GUID_CLASS_TSMiniDriver, NULL, NULL, DIGCF_DEVICEINTERFACE | DIGCF_ALLCLASSES);
+	HDEVINFO info = SetupDiGetClassDevs(&GUID_DEVINTERFACE_TSMiniDriver, NULL, NULL,  DIGCF_PRESENT | DIGCF_DEVICEINTERFACE);
 
 	if (info == INVALID_HANDLE_VALUE) {
 		std::cerr << "No such class with GUID 280D1736-F08A-494D-AFA2-5A731DBBC7BF" << std::endl;
 		return 1;
 	}
-
+	
 	SP_DEVICE_INTERFACE_DATA ifdata;
 	ifdata.cbSize = sizeof(ifdata);
 	DWORD devindex;
 
+	TsMiniDeviceHandle = INVALID_HANDLE_VALUE;
 	for (devindex = 0; SetupDiEnumDeviceInterfaces(info, NULL, &GUID_DEVINTERFACE_TSMiniDriver, devindex, &ifdata); ++devindex)
 	{
 		// for each device
@@ -242,18 +243,26 @@ int main(int argc, char *argv[])
 			&& SetupDiGetDeviceRegistryProperty(info, &did, SPDRP_DEVICEDESC, NULL, (PBYTE)fname, sizeof(fname) / 2, NULL))
 
 		{
-
+		
 			TsMiniDeviceHandle = CreateFile(detail->DevicePath, GENERIC_ALL, 0, 0, OPEN_EXISTING, FILE_ATTRIBUTE_SYSTEM, 0);
-
+		
 			if (TsMiniDeviceHandle == INVALID_HANDLE_VALUE) {
 				std::cerr << "Cannot open " << detail->DevicePath << std::endl;
 				return 1;
 			}
 			else {
-
 				break;
 			}
 		}
+	}
+
+	if (info) {
+		SetupDiDestroyDeviceInfoList(info);
+	}
+
+	if (TsMiniDeviceHandle == INVALID_HANDLE_VALUE) {
+		std::cerr << "Cannot open TS-MINI-ADC device (is it present on your system?) " << std::endl;
+		return 1;
 	}
 
 	if (do_read || do_write) {
@@ -300,7 +309,6 @@ int main(int argc, char *argv[])
 		return 1;
 	}
 
-
 	dataFIFO_0 = dataFIFO;
 	dataFIFO_1 = &dataFIFO[FIFOSIZE_IN_WORDS / 4];
 	dataFIFO_2 = &dataFIFO[(FIFOSIZE_IN_WORDS * 2) / 4];
@@ -331,7 +339,9 @@ int main(int argc, char *argv[])
 
 				Sleep(1000);
 				timeElapsed = time(NULL) - startTime;
+#if DEBUG_ON
 				printf("%lld %lld %lld, %ld bytes/sec\n", produced, consumed, consumed - produced, (long)(produced / timeElapsed));
+#endif
 			}
 		}
 	}
