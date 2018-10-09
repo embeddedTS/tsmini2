@@ -21,7 +21,7 @@ Signature      = "$WINDOWS NT$"
 Class          = TSMiniDevices
 ClassGuid      = {280D1736-F08A-494D-AFA2-5A731DBBC7BF}
 Provider       = %ProviderString%
-DriverVer = 10/08/2018,15.19.42.548
+DriverVer = 10/09/2018,7.45.27.111
 CatalogFile    = tsminidrv.cat
 
 
