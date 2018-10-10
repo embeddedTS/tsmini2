@@ -12,10 +12,13 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <time.h>
-
+#include <filesystem>
 #include <iostream>
+
 #include <setupapi.h>
 
+using namespace std;
+using namespace std::experimental::filesystem;
 
 #define NCHANNELS	4
 
@@ -55,9 +58,32 @@ PUINT16 dataFIFO;
 PUINT16 dataFIFO_0, dataFIFO_1, dataFIFO_2, dataFIFO_3;
 static volatile uint32_t put_0, get_0, put_1, get_1, put_2, get_2, put_3, get_3;
 static HANDLE TsMiniDeviceHandle;
+static int64_t num_samples;
 
 static bool ch1_active, ch2_active, ch3_active, ch4_active;
 static bool binaryMode;
+static uint32_t reg10h;
+static int opt_save(char *arg);
+static int opt_program(char *arg);
+static bool sampling_completed;
+
+
+static void usage(char **argv)
+{
+	path prog(argv[0]);
+
+	cout << "Usage: " << prog.filename() << " [OPTION] ..." << endl <<
+		"  -a ADR        Specify register address" << endl <<
+		"  -w VAL        Write VAL to register" << endl <<
+		"  -r            Read register" << endl <<
+		"  -o OUTPUTS    Initialize CN1 digital outputs to OUTPUTS" << endl <<
+		"  -c VAL        Initialize config reg to VAL" << endl <<
+		"  -S channels   Select active channels, specified for example as 1.2.4 (default is to sample all channels)" << endl << 
+		"  -n NUM        Stop after NUM samples per active channel (default is to never stop)" << endl <<
+		"  -p RPDFILE    Program new FPGA configuration flash from RPDFILE" << endl <<
+		"  -s RPDFILE    Save existing FPGA flash config to RPDFILE" << endl <<
+		"  -b            Output samples in binary" << endl;
+}
 
 int main(int argc, char *argv[])
 {
@@ -65,12 +91,15 @@ int main(int argc, char *argv[])
 	unsigned long val;
 	bool do_read = false;
 	bool do_write = false;
+	bool do_show_config = false;
 	bool have_register = false;
 	bool have_val = false;
+	char *opt_save_arg = NULL;
+	char *opt_prog_arg = NULL;
 
 	ch1_active = ch2_active = ch3_active = ch4_active = true;
-	binaryMode = false;
-
+	binaryMode = sampling_completed = false;
+	
 	if (argc > 1) {
 		for (int i = 1; i < argc; i++) {
 			char *cp = argv[i];
@@ -78,7 +107,7 @@ int main(int argc, char *argv[])
 			if (*cp == '-' || *cp == '/') {
 				cp++;
 				if (!*cp) {
-					std::cerr << "Missing switch at -" << std::endl;
+					cerr << "Missing switch at -" << endl;
 					return 1;
 				}
 				if (*cp == 'a') {
@@ -90,14 +119,14 @@ int main(int argc, char *argv[])
 
 					if (cp) {
 						reg = strtoul(cp, NULL, 0);
-						if (reg < 0 || reg > 4) {
-							std::cerr << "Register address out of range (0..4)" << std::endl;
+						if (reg < 0 || reg > 5) {
+							cerr << "Register address out of range (0..5)" << endl;
 							return 1;
 						}
 						have_register = true;
 					}
 					else {
-						std::cerr << "Missing argument to -a" << std::endl;
+						cerr << "Missing argument to -a" << endl;
 						return 1;
 					}
 				}
@@ -113,7 +142,7 @@ int main(int argc, char *argv[])
 						have_val = true;
 					}
 					else {
-						std::cerr << "Missing argument to -w" << std::endl;
+						cerr << "Missing argument to -w" << endl;
 						return 1;
 					}
 
@@ -123,6 +152,90 @@ int main(int argc, char *argv[])
 					do_read = true;
 				}
 				else if (*cp == 's') {
+
+					cp++;
+					if (!*cp) {
+						i++;
+						cp = argv[i];
+					}
+
+					if (!cp) {
+						cerr << "Missing argument to -s" << endl;
+						return 1;
+					}
+
+					opt_save_arg = _strdup(cp);
+
+				} else if (*cp == 'n') {
+
+					cp++;
+					if (!*cp) {
+						i++;
+						cp = argv[i];
+					}
+
+					if (!cp) {
+						cerr << "Missing argument to -n" << endl;
+						return 1;
+					}
+
+					num_samples = strtoull(cp, NULL, 0);
+					if (num_samples < 0) {
+						cerr << "Argument to -n cannot be negative" << endl;
+						return 1;
+					}
+					
+				} else if (*cp == 'c') {
+
+					cp++;
+					if (!*cp) {
+						i++;
+						cp = argv[i];
+					}
+
+					if (!cp) {
+						cerr << "Missing argument to -c" << endl;
+						return 1;
+					}
+
+					val = strtoul(cp, NULL, 0);
+					reg = 0;
+					have_val = have_register = do_write = true;
+					
+				} else if (*cp == 'o') {
+
+					cp++;
+					if (!*cp) {
+						i++;
+						cp = argv[i];
+					}
+
+					if (!cp) {
+						cerr << "Missing argument to -o" << endl;
+						return 1;
+					}
+
+					val = strtoul(cp, NULL, 0) & 0xC0000FFF;
+					reg = 4;
+					have_val = have_register = do_write = true;
+
+				} else if (*cp == 'p') {
+
+					cp++;
+					if (!*cp) {
+						i++;
+						cp = argv[i];
+					}
+
+					if (!cp) {
+						cerr << "Missing argument to -p" << endl;
+						return 1;
+					}
+
+					opt_prog_arg = _strdup(cp);
+
+				}
+				else if (*cp == 'S') {
 					char *tok, *next;
 					int c,n;
 
@@ -133,7 +246,7 @@ int main(int argc, char *argv[])
 					}
 
 					if (!cp) {
-						std::cerr << "Missing argument to -s" << std::endl;
+						cerr << "Missing argument to -S" << endl;
 						return 1;
 					}
 
@@ -146,12 +259,12 @@ int main(int argc, char *argv[])
 
 						c = atoi(tok);
 						if (c < 1 || c > 4) {
-							std::cerr << "Channel number '" << tok << "' out of bounds in -s" << std::endl;
+							cerr << "Channel number '" << tok << "' out of bounds in -s" << endl;
 							return 1;
 						}
 						n++;
 						if (n > 4) {
-							std::cerr << "Too many channels in -s" << std::endl;
+							cerr << "Too many channels in -S" << endl;
 							return 1;
 						}
 
@@ -165,43 +278,42 @@ int main(int argc, char *argv[])
 					}
 
 					if (ch1_active == false && ch2_active == false && ch3_active == false && ch4_active == false) {
-						std::cerr << "No channels active" << std::endl;
+						cerr << "No channels active" << endl;
 						return 1;
 					}
 
 				}
 				else if (*cp == 'h') {
-					std::cout << "Usage:" << std::endl <<
-						"    tsmini2-win -a N -r    (to read register N)" << std::endl <<
-						"    tsmini2-win -a N -w V  (to write V register N)" << std::endl <<
-						"    tsmini2-win -s1:3:4    (to sample channels 1,3 and 4; default is to sample all channels)" << std::endl << std::endl <<
-						"    Use -b for binary output" << std::endl;
+					usage(argv);
 					return 0;
 
 				} else if (*cp == 'b') {
 					binaryMode = true;
 				}
-				else {
-					std::cerr << "Unrecognized argument -" << *cp << std::endl;
+				else if (*cp == 'l') {
+					do_show_config = true;						
+				} else {
+					cerr << "Unrecognized argument -" << *cp << endl;
 					return 1;
 				}
 			}
 		}
 	}
 
+
 	if (do_write) {
 		if (!have_register) {
-			std::cerr << "Missing register" << std::endl;
+			cerr << "Missing register" << endl;
 			return 1;
 		}
 		else if (!have_val) {
-			std::cerr << "Missing value to write" << std::endl;
+			cerr << "Missing value to write" << endl;
 			return 1;
 		}
 	}
 
 	if (do_read && !have_register) {
-		std::cerr << "Missing register" << std::endl;
+		cerr << "Missing register" << endl;
 		return 1;
 	}
 
@@ -210,7 +322,7 @@ int main(int argc, char *argv[])
 	HDEVINFO info = SetupDiGetClassDevs(&GUID_DEVINTERFACE_TSMiniDriver, NULL, NULL,  DIGCF_PRESENT | DIGCF_DEVICEINTERFACE);
 
 	if (info == INVALID_HANDLE_VALUE) {
-		std::cerr << "No such class with GUID 280D1736-F08A-494D-AFA2-5A731DBBC7BF" << std::endl;
+		cerr << "No such class with GUID 280D1736-F08A-494D-AFA2-5A731DBBC7BF" << endl;
 		return 1;
 	}
 	
@@ -247,7 +359,7 @@ int main(int argc, char *argv[])
 			TsMiniDeviceHandle = CreateFile(detail->DevicePath, GENERIC_ALL, 0, 0, OPEN_EXISTING, FILE_ATTRIBUTE_SYSTEM, 0);
 		
 			if (TsMiniDeviceHandle == INVALID_HANDLE_VALUE) {
-				std::cerr << "Cannot open " << detail->DevicePath << std::endl;
+				cerr << "Cannot open " << detail->DevicePath << endl;
 				return 1;
 			}
 			else {
@@ -261,20 +373,42 @@ int main(int argc, char *argv[])
 	}
 
 	if (TsMiniDeviceHandle == INVALID_HANDLE_VALUE) {
-		std::cerr << "Cannot open TS-MINI-ADC device (is it present on your system?) " << std::endl;
+		cerr << "Cannot open TS-MINI-ADC device (is it present on your system?) " << endl;
 		return 1;
 	}
+
+	if (do_show_config) {
+		ULONG result, returnedLen;
+		reg = 0;
+		DeviceIoControl(TsMiniDeviceHandle, TSMINIADC_IOCTL_READ_REG, &reg, sizeof(reg), &result, sizeof(result), &returnedLen, 0);
+		
+		printf("rev=%d\n", result & 0xff);
+		printf("sel_an1_gnd=%d\n", !!(result & (1 << 8)));
+		printf("sel_an2_gnd=%d\n", !!(result & (1 << 9)));
+		printf("sel_an3_gnd=%d\n", !!(result & (1 << 10)));
+		printf("sel_an4_gnd=%d\n", !!(result & (1 << 11)));
+		printf("sel_an4_gnd=%d\n", !!(result & (1 << 11)));
+		printf("sel_an3_dc=%d\n", !!(result & (1 << 12)));
+		printf("sel_an4_dc=%d\n", !!(result & (1 << 13)));
+		return 0;
+	}
+
+	if (opt_save_arg)
+		return opt_save(opt_save_arg);
+
+	if (opt_prog_arg)
+		return opt_program(opt_prog_arg);
 
 	if (do_read || do_write) {
 		ULONG result, returnedLen;
 
 		if (do_write) {
 			ULONG64 regVal = ((ULONG64)val << 32) | reg;
-			if (reg == 4) {
+			if (reg == 1) {
 				DeviceIoControl(TsMiniDeviceHandle, TSMINIADC_IOCTL_READ_REG, &reg, sizeof(reg), &result, sizeof(result), &returnedLen, 0);
 
 				if (result) {
-					std::cerr << "DMA address register already written; disallowing another write" << std::endl;
+					cerr << "DMA address register already written; disallowing another write" << endl;
 					return 1;
 				}
 			}
@@ -305,7 +439,7 @@ int main(int argc, char *argv[])
 	dataFIFO = (PUINT16)malloc(FIFOSIZE);
 
 	if (dataFIFO == NULL) {
-		std::cerr << "Failed to allocate memory for FIFO" << std::endl;
+		cerr << "Failed to allocate memory for FIFO" << endl;
 		return 1;
 	}
 
@@ -321,21 +455,21 @@ int main(int argc, char *argv[])
 
 	hFpgaLoop = CreateThread(NULL, 0, (LPTHREAD_START_ROUTINE)loop_fpga, NULL, 0, &tid_fpga);
 	if (hFpgaLoop == INVALID_HANDLE_VALUE)
-		std::cerr << "Failed to create fpga_loop" << std::endl;
+		cerr << "Failed to create fpga_loop" << endl;
 	else {
 
 		SetThreadPriority(hFpgaLoop, THREAD_PRIORITY_HIGHEST);
 
 		hMatlabLoop = CreateThread(NULL, 0, (LPTHREAD_START_ROUTINE)loop_output, NULL, 0, &tid_matlab);
 		if (hMatlabLoop == INVALID_HANDLE_VALUE)
-			std::cerr << "Failed to create matlab_loop" << std::endl;
+			cerr << "Failed to create matlab_loop" << endl;
 		else {
 			time_t startTime, timeElapsed;
 
 			SetThreadPriority(hMatlabLoop, THREAD_PRIORITY_NORMAL);
 
 			startTime = time(NULL);
-			for (;;) {
+			while (!sampling_completed) {
 
 				Sleep(1000);
 				timeElapsed = time(NULL) - startTime;
@@ -463,7 +597,7 @@ DWORD loop_fpga(LPVOID pParam)
 	DeviceIoControl(TsMiniDeviceHandle, TSMINIADC_IOCTL_READ_REG, &reg, sizeof(reg), &dma_buffer_base, sizeof(dma_buffer_base), &returnedLen, 0);
 
 	if (dma_buffer_base == NULL) {	// If DMA hasn't been started already, read the buffer address from the driver...
-		reg = 4;	// a pseudo-register (ie, in the driver, not in the FPGA)
+		reg = 5;	// a pseudo-register (ie, in the driver, not in the FPGA)
 		DeviceIoControl(TsMiniDeviceHandle, TSMINIADC_IOCTL_READ_REG, &reg, sizeof(reg), &dma_buffer_base, sizeof(dma_buffer_base), &returnedLen, 0);
 		reg = 1;
 		if (dma_buffer_base) {	// and write it to the FPGA dma base register
@@ -485,7 +619,7 @@ DWORD loop_fpga(LPVOID pParam)
 		if (last_write & 1) {
 			if (sleepTime > 2)
 				sleepTime--;
-			std::cerr << "  *** DMA Overflow *** try " << sleepTime << std::endl;
+			cerr << "  *** DMA Overflow *** try " << sleepTime << endl;
 		}
 
 		nRead = 0;
@@ -591,8 +725,335 @@ DWORD loop_output(LPVOID pParam)
 			if (ch4_active)
 				fwrite((void*)&sample, sizeof(sample), 1, stdout);
 		}
+		if (num_samples > 0) {
+			if (--num_samples == 0)
+				break;
+		}		
 	}
+
+	sampling_completed = true;
+	return 0;
+}
+
+///////////  SPI Flash code follows ///////////////////
+
+
+static uint8_t read_spi_byte(void) {
+	uint32_t n = 0;
+	uint8_t ret;
+	int reg = 4;
+	ULONG result, returnedLen, val;
+	ULONG64 regVal;
+
+	for (ret = n = 0; n < 8; n++) {	
+		val = reg10h & ~(1 << 17); /* clk lo */
+		regVal = ((ULONG64)val << 32) | reg;
+		DeviceIoControl(TsMiniDeviceHandle, TSMINIADC_IOCTL_WRITE_REG, &regVal, sizeof(regVal), &result, sizeof(result), &returnedLen, 0);
+		
+		val = reg10h | (1 << 17); /* clk hi */
+		regVal = ((ULONG64)val << 32) | reg;
+		DeviceIoControl(TsMiniDeviceHandle, TSMINIADC_IOCTL_WRITE_REG, &regVal, sizeof(regVal), &result, sizeof(result), &returnedLen, 0);
+
+		ret = (ret << 1);
+
+		DeviceIoControl(TsMiniDeviceHandle, TSMINIADC_IOCTL_READ_REG, &reg, sizeof(reg), &result, sizeof(result), &returnedLen, 0);
+
+		if (result & (1 << 19)) ret |= 1;
+	}
+	return ret;
+}
+
+static void write_spi_byte(uint8_t x) {
+	uint32_t n = 0;
+	uint32_t v;
+
+	ULONG result, returnedLen, val;
+	ULONG64 regVal;
+
+	for (n = 0; n < 8; n++) {
+		if (x & 0x80)
+			v = reg10h | (1 << 16);
+		else
+			v = reg10h & ~(1 << 16);
+
+		val = v & ~(1 << 17); /* clk lo */
+		regVal = ((ULONG64)val << 32) | 4;
+		DeviceIoControl(TsMiniDeviceHandle, TSMINIADC_IOCTL_WRITE_REG, &regVal, sizeof(regVal), &result, sizeof(result), &returnedLen, 0);
+
+		val = v | (1 << 17); /* clk hi */
+		regVal = ((ULONG64)val << 32) | 4;
+		DeviceIoControl(TsMiniDeviceHandle, TSMINIADC_IOCTL_WRITE_REG, &regVal, sizeof(regVal), &result, sizeof(result), &returnedLen, 0);
+
+		x = x << 1;
+	}
+	return;
+}
+
+static void enable_cs(void) {
+	ULONG result, returnedLen, val;
+	ULONG64 regVal;
+
+	reg10h &= ~(1 << 18);
+	val = reg10h;
+	regVal = ((ULONG64)val << 32) | 4;
+	DeviceIoControl(TsMiniDeviceHandle, TSMINIADC_IOCTL_WRITE_REG, &regVal, sizeof(regVal), &result, sizeof(result), &returnedLen, 0);
+}
+
+static void disable_cs(void) {
+	ULONG result, returnedLen, val;
+	ULONG64 regVal;
+
+	reg10h |= (1 << 18);
+	val = reg10h;
+	regVal = ((ULONG64)val << 32) | 4;
+	DeviceIoControl(TsMiniDeviceHandle, TSMINIADC_IOCTL_WRITE_REG, &regVal, sizeof(regVal), &result, sizeof(result), &returnedLen, 0);
+}
+
+static void spi_one_byte_cmd(uint8_t cmd) {
+	enable_cs();
+	write_spi_byte(cmd);
+	disable_cs();
+}
+
+static void spif_read(uint32_t adr, uint8_t *buf, uint32_t cnt) {
+	enable_cs();
+	write_spi_byte(3);
+	write_spi_byte(adr >> 16);
+	write_spi_byte(adr >> 8);
+	write_spi_byte(adr);
+	while (cnt--) *(buf++) = read_spi_byte();
+	disable_cs();
+}
+
+
+static void spif_write(uint32_t adr, uint8_t *buf, uint32_t cnt) {
+	uint32_t n = 0, i;
+	uint8_t s;
+
+	while (cnt > 256) {
+		spif_write(adr, buf, 256);
+		adr += 256;
+		buf += 256;
+		cnt -= 256;
+	}
+
+	for (i = 0; i < cnt; i++) if (buf[i] != 0xff) break;
+	if (i == cnt) return; /* All 1's ! */
+
+	spi_one_byte_cmd(6); /* Write enable */
+
+	enable_cs();
+	write_spi_byte(2); /* Page program */
+	write_spi_byte(adr >> 16);
+	write_spi_byte(adr >> 8);
+	write_spi_byte(adr);
+	while (cnt--) write_spi_byte(*(buf++));
+	disable_cs();
+
+	enable_cs();
+	write_spi_byte(5); /* Read status register */
+	do { s = read_spi_byte(); n++; } while ((s & 1) && n < 8192);
+	disable_cs();
+	if (n == 8192) {
+		cerr << "SPI flash chip write timeout!" << endl;
+		exit(1);
+	}
+	spi_one_byte_cmd(4); /* Write disable */
+}
+
+static void spif_erase(void) {
+	uint8_t s;
+	uint32_t n = 0;
+
+	spi_one_byte_cmd(6); /* Write enable */
+	spi_one_byte_cmd(0xc7); /* Chip erase */
+	enable_cs();
+	write_spi_byte(5); /* Read status register */
+	do {
+		s = read_spi_byte();
+		n++;
+	} while ((s & 1) && n < 3000000);
+	disable_cs();
+	if (n == 3000000) {
+		cerr << "SPI flash chip erase timeout!" << endl;
+		exit(1);
+	}
+	spi_one_byte_cmd(4); /* Write disable */
+}
+
+static uint32_t spif_rdid(void) {
+	uint32_t r;
+
+	disable_cs();
+	spi_one_byte_cmd(0x66);
+	spi_one_byte_cmd(0x99);
+	enable_cs();
+	write_spi_byte(0x9f);
+	r = read_spi_byte();
+	r |= read_spi_byte() << 8;
+	r |= read_spi_byte() << 16;
+	disable_cs();
+
+	return r;
+}
+
+static int opt_save(char *arg)
+{
+	int i;
+	uint8_t *fpga_spif;
+	uint32_t id, fpgarev;
+	FILE *out = stdout;
+
+	ULONG result, returnedLen;
+	int reg = 0;
+
+	DeviceIoControl(TsMiniDeviceHandle, TSMINIADC_IOCTL_READ_REG, &reg, sizeof(reg), &result, sizeof(result), &returnedLen, 0);
+	fpgarev = result & 0xff;
+
+	cerr << "fpgarev = 0x" << hex << fpgarev << endl;
+		
+	if (fpgarev < 3) {
+		cerr << "FPGA must be rev 3 or later" << endl;
+		return 1;
+	}
+
+	reg = 4;	// reg10h
+	result = 0;
+	DeviceIoControl(TsMiniDeviceHandle, TSMINIADC_IOCTL_READ_REG, &reg, sizeof(reg), &result, sizeof(result), &returnedLen, 0);
+	reg10h = result;
+
+	fpga_spif = (uint8_t *)malloc(0x200000);	
+	if (fpga_spif == NULL) {
+		cerr << "Memory allocation error in " << __func__ << endl;
+		return 1;
+	}
+
+	cerr << "Reading FPGA SPI flash chip ID...0x";
+	id = spif_rdid();
+	cerr << hex << id;
+	
+	if (id == 0xffffff || id == 0) {
+		cerr << "  Bad SPI flash chip ID!" << endl;
+		return 2;
+	}
+	else 
+		cerr << "  ok" << endl;
+
+	if (arg && strcmp(arg, "-") != 0) {
+		cerr << "Opening \"" << arg << "\" file for writing...";
+		if (fopen_s(&out, arg, "wb")) {
+			perror(arg);
+			return 1;
+		}
+		else cerr << "ok" << endl;
+	}
+
+	for (i = 0; i < (0x200000 / 256); i++) {
+		spif_read(i * 256, &fpga_spif[i * 256], 256);
+		if ((i * 256) >> 18 != ((i - 1) * 256) >> 18)
+			cerr << "Reading flash, " << std::dec << (i * 100 / (0x200000 / 256)) << "% done..." << endl;			
+	}
+	cerr << "Reading flash, 100% done..." << endl;
+
+	for (i = 0x200000 - 1; i > 0; i--) if (fpga_spif[i] != 0xff) break;
+	i++;
+	cerr << "Writing " << std::dec << i << " bytes to output...";
+	fwrite(fpga_spif, 1, i, out);
+	cerr << "ok" << endl;
+		
+	if (out != stdout) 
+		fclose(out);
 
 	return 0;
 }
+
+static int opt_program(char *arg) 
+{
+	int i, c;
+	uint8_t *fpga_spif;
+	uint32_t id, fpgarev;
+	FILE *in = stdin;
+
+	ULONG result, returnedLen;
+	int reg = 0;
+	DeviceIoControl(TsMiniDeviceHandle, TSMINIADC_IOCTL_READ_REG, &reg, sizeof(reg), &result, sizeof(result), &returnedLen, 0);
+	
+	fpgarev = result & 0xff;
+	cerr << "fpgarev = 0x" << hex << fpgarev << endl;
+
+	if (fpgarev < 3) {
+		cerr << "FPGA must be rev 3 or later" << endl;
+		return 1;
+	}
+
+	reg = 4;	// reg10h
+	result = 0;
+	DeviceIoControl(TsMiniDeviceHandle, TSMINIADC_IOCTL_READ_REG, &reg, sizeof(reg), &result, sizeof(result), &returnedLen, 0);	
+	reg10h = result;
+
+	fpga_spif = (uint8_t *)malloc(0x200000);
+	if (fpga_spif == NULL) {
+		cerr << "Memory allocation error in " << __func__ << endl;
+		return 1;
+	}
+
+	memset(fpga_spif, 0xff, 0x200000);
+
+	if (arg && strcmp(arg, "-") != 0) {
+		cerr << "Opening \"" << arg << "\" file for reading...";
+
+		if (fopen_s(&in, arg, "rb")) {
+			perror(arg);
+			return 1;
+		}
+		else cerr << "ok" << endl;
+	}
+	else cerr << "Reading program from stdin..." << endl;
+
+	for (i = 0; i < 0x200000; i++) {
+		c = fgetc(in);
+		if (c == EOF) break;
+		else fpga_spif[i] = c;
+	}
+	if (in != stdin) fclose(in);
+
+	cerr << "Reading FPGA SPI flash chip ID...0x";
+	id = spif_rdid();
+	cerr << hex << id;
+
+	if (id == 0xffffff || id == 0) {
+		cerr << "  Bad SPI flash chip ID!" << endl;
+		return 2;
+	}
+	else
+		cerr << "  ok" << endl;
+	
+	cerr << "Erasing...";
+	spif_erase();
+	cerr << "ok" << endl;
+
+
+	for (i = 0; i < (0x200000 / 256); i++) {
+		spif_write(i * 256, &fpga_spif[i * 256], 256);
+		if ((i * 256) >> 18 != ((i - 1) * 256) >> 18)
+			cerr << "Writing flash, " << std::dec << (i * 100 / (0x200000 / 256)) << "% done..." << endl;		
+	}
+	cerr << "Writing flash, 100% done..." << endl;
+	
+	for (i = 0; i < (0x200000 / 256); i++) {
+		uint8_t buf[256];
+		spif_read(i * 256, buf, 256);
+		if ((i * 256) >> 18 != ((i - 1) * 256) >> 18)
+			cerr << "Verifying flash, " << std::dec << (i * 100 / (0x200000 / 256)) << "% done..." << endl;
+		if (memcmp(&fpga_spif[i * 256], buf, 256) != 0) {
+			cerr << "Verify failed at " << (i * 256 * 100 / 0x200000) << "%!!" << endl;
+			free(fpga_spif);
+			return 3;
+		}
+	}
+	cerr << "Verifying flash, 100% done..." << endl;
+	free(fpga_spif);
+	return 0;
+}
+
 
