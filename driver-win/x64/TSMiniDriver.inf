@@ -1,6 +1,6 @@
 ;/*++
 ;
-;Copyright (c) Technologic Systems Inc, 2018
+;Copyright (c) 2018-2022 Technologic Systems, Inc. dba embeddedTS
 ;
 ;   THIS CODE AND INFORMATION IS PROVIDED "AS IS" WITHOUT WARRANTY OF ANY
 ;   KIND, EITHER EXPRESSED OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE
@@ -122,11 +122,11 @@ KmdfLibraryVersion = 1.15
 ;------------------------------------------------------------------------------
 
 [Strings]
-ProviderString     = "Technologic Systems Inc."
-ManufacturerString = "Technologic Systems Inc."
+ProviderString     = "embeddedTS"
+ManufacturerString = "embeddedTS"
 ClassName          = "TS-MINI Devices"
-TSMINI.SVCDESC     = "Technologic Systems TS-MINI PCI Driver"
-TSMINI.DRVDESC     = "Technologic Systems TS-MINI PCI Driver"
+TSMINI.SVCDESC     = "embeddedTS TS-MINI PCI Driver"
+TSMINI.DRVDESC     = "embeddedTS TS-MINI PCI Driver"
 DISK_NAME          = "TS-MINI Install Disk"
 GUID_INTERFACE     = "{cadae116-f4d7-42c9-9bb1-bac6d8e2d6d0}"
 MODEL_NAME         = "TSMINIADC"

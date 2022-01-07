@@ -290,7 +290,7 @@ static int opt_program(char *arg) {
 
 void usage(char **argv) {
 	fprintf(stderr, "Usage: %s [OPTION] ...\n"
-	  "Technologic Systems TS-MINI PCIe card manipulation.\n"
+	  "embeddedTS TS-MINI PCIe card manipulation.\n"
 	  "\n"
 	  "  -i, --initdma=PHYS       Initialize 2MB DMA buffer at physical address PHYS\n"
 	  "  -o, --initcn1=OUTPUTS    Initialize CN1 digital outputs to OUTPUTS\n"
